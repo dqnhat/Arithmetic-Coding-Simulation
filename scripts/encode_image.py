@@ -82,21 +82,27 @@ def save_json(path, data):
 
 
 def encode_arithmetic(pixels, out_prefix):
-    # Prepare adaptive model: list of symbols (unique pixel values) plus EOM
-    unique = sorted(set(pixels))
+    freqs = dict(Counter(pixels))
+    
+    # Compute source entropy (before adding EOM)
+    total = sum(freqs.values())
+    entropy = 0
+    for count in freqs.values():
+        if count > 0:
+            p = count / total
+            entropy -= p * math.log2(p)
+    
     # Choose a numeric EOM symbol not present in pixels
-    max_val = max(unique) if unique else -1
+    max_val = max(freqs.keys()) if freqs else -1
     EOM_SYMBOL = int(max_val) + 1
-
-    # initial symbols must have consistent types (ints)
-    initial_symbols = [int(u) for u in unique] + [EOM_SYMBOL]
+    freqs[EOM_SYMBOL] = 1
 
     # Estimate needed bits so that the arithmetic encoder has enough range
+    total_unique = len(freqs)
     N = len(pixels) + 1  # include EOM
-    total_symbols = len(initial_symbols) + N
-    bits = max(8, math.ceil(math.log2(total_symbols + 1)) + 2)
+    bits = max(8, math.ceil(math.log2(total_unique + N + 1)) + 2)
 
-    encoder = ArithmeticEncoder(frequencies=initial_symbols, bits=bits, EOM=EOM_SYMBOL)
+    encoder = ArithmeticEncoder(frequencies=freqs, bits=bits, EOM=EOM_SYMBOL)
 
     # message: pixel values followed by EOM_SYMBOL
     message = list(pixels) + [EOM_SYMBOL]
@@ -105,11 +111,21 @@ def encode_arithmetic(pixels, out_prefix):
 
     freq_meta = {
         "method": "arithmetic",
-        "initial_symbols": initial_symbols,
+        "frequencies": freqs,
         "bits": bits,
         "EOM": EOM_SYMBOL,
     }
-    encoded_meta = {"method": "arithmetic", "bits": bits_out}
+    encoded_meta = {
+        "method": "arithmetic",
+        "channel_size_bits": len(pixels) * 8,
+        "channel_size_bytes": len(pixels),
+        "encoded_bits": len(bits_out),
+        "encoded_bytes": (len(bits_out) + 7) // 8,
+        "compression_ratio": len(pixels) / ((len(bits_out) + 7) // 8) if (len(bits_out) + 7) // 8 > 0 else float('inf'),
+        "source_entropy": entropy,
+        "ideal_compression_ratio": 8 / entropy if entropy > 0 else float('inf'),
+        "bits": bits_out
+    }
     save_json(out_prefix + "__arithmetic_freq.json", freq_meta)
     save_json(out_prefix + "__arithmetic_encoded.json", encoded_meta)
 
@@ -118,6 +134,15 @@ def encode_arithmetic(pixels, out_prefix):
 
 def encode_huffman(pixels, out_prefix):
     freqs = dict(Counter(pixels))
+    
+    # Compute source entropy (before adding EOM)
+    total = sum(freqs.values())
+    entropy = 0
+    for count in freqs.values():
+        if count > 0:
+            p = count / total
+            entropy -= p * math.log2(p)
+    
     # Use the same numeric EOM symbol as in the arithmetic encoder convention.
     # Choose an EOM that is not one of the pixel values
     max_val = max(freqs.keys()) if freqs else -1
@@ -128,7 +153,17 @@ def encode_huffman(pixels, out_prefix):
     bits_str = encoder.encode(message)
 
     freq_meta = {"method": "huffman", "frequencies": freqs, "EOM": EOM_SYMBOL}
-    encoded_meta = {"method": "huffman", "bits": bits_str}
+    encoded_meta = {
+        "method": "huffman",
+        "channel_size_bits": len(pixels) * 8,
+        "channel_size_bytes": len(pixels),
+        "encoded_bits": len(bits_str),
+        "encoded_bytes": (len(bits_str) + 7) // 8,
+        "compression_ratio": len(pixels) / ((len(bits_str) + 7) // 8) if (len(bits_str) + 7) // 8 > 0 else float('inf'),
+        "source_entropy": entropy,
+        "ideal_compression_ratio": 8 / entropy if entropy > 0 else float('inf'),
+        "bits": bits_str
+    }
     save_json(out_prefix + "__huffman_freq.json", freq_meta)
     save_json(out_prefix + "__huffman_encoded.json", encoded_meta)
 

@@ -40,19 +40,20 @@ def load_json(path):
 
 
 def attempt_arithmetic(freq_meta, encoded_meta):
-    # freq_meta must contain initial_symbols and bits
-    initial_symbols = freq_meta.get("initial_symbols")
+    freqs = freq_meta.get("frequencies")
     bits = freq_meta.get("bits")
     EOM_SYMBOL = freq_meta.get("EOM")
-    if initial_symbols is None or bits is None:
+    if freqs is None or bits is None:
         raise ValueError("Invalid arithmetic metadata")
-    encoder = ArithmeticEncoder(frequencies=initial_symbols, bits=bits, EOM=EOM_SYMBOL)
+    # Convert string keys back to integers after JSON round-trip
+    freqs = {int(k): int(v) for k, v in freqs.items()}
+    encoder = ArithmeticEncoder(frequencies=freqs, bits=bits, EOM=EOM_SYMBOL)
     bits_list = encoded_meta.get("bits")
     if bits_list is None:
         raise ValueError("No bits in encoded metadata")
 
     decoded = list(encoder.decode(bits_list))
-    return decoded
+    return decoded, EOM_SYMBOL
 
 
 def attempt_huffman(freq_meta, encoded_meta):
@@ -60,15 +61,17 @@ def attempt_huffman(freq_meta, encoded_meta):
     EOM_SYMBOL = freq_meta.get("EOM")
     if freqs is None:
         raise ValueError("Invalid huffman metadata")
+    # Convert string keys back to integers after JSON round-trip
+    freqs = {int(k): int(v) for k, v in freqs.items()}
     encoder = HuffmanEncoder(freqs, EOM=EOM_SYMBOL)
     bits_str = encoded_meta.get("bits")
     if bits_str is None:
         raise ValueError("No bits in encoded metadata")
     decoded = encoder.decode(bits_str)
-    return decoded
+    return decoded, EOM_SYMBOL
 
 
-def save_channel_as_image(pixels, out_path, mode="L", size=None):
+def save_channel_as_image(pixels, out_path, EOM_SYMBOL, mode="L", size=None):
     if size is None:
         # attempt to infer size as square
         n = len(pixels)
@@ -82,10 +85,9 @@ def save_channel_as_image(pixels, out_path, mode="L", size=None):
     # ignore EOM tokens when building pixel data
     cleaned = []
     for p in pixels:
-        if p == EOM_SYMBOL if isinstance(p, type(p)) and False else False:
-            # defensive no-op; keep standard conversion below
-            pass
-        cleaned.append(int(p) if not (isinstance(p, str) and p == "<EOM>") else 0)
+        if p == EOM_SYMBOL:
+            continue
+        cleaned.append(int(p))
 
     im.putdata(cleaned[: size[0] * size[1]])
     im.save(out_path)
@@ -118,9 +120,9 @@ def main():
     try:
         if data.get("method") == "arithmetic":
             freq_meta = load_json(ar_freq_path)
-            decoded = attempt_arithmetic(freq_meta, data)
+            decoded, eom = attempt_arithmetic(freq_meta, data)
             out_img = base + "__arithmetic_decoded.png"
-            save_channel_as_image(decoded, out_img, size=shape)
+            save_channel_as_image(decoded, out_img, eom, size=shape)
             outputs.append(out_img)
     except Exception as exc:
         print("Arithmetic decode failed:", exc)
@@ -128,9 +130,9 @@ def main():
     try:
         if data.get("method") == "huffman":
             freq_meta = load_json(hf_freq_path)
-            decoded = attempt_huffman(freq_meta, data)
+            decoded, eom = attempt_huffman(freq_meta, data)
             out_img = base + "__huffman_decoded.png"
-            save_channel_as_image(decoded, out_img, size=shape)
+            save_channel_as_image(decoded, out_img, eom, size=shape)
             outputs.append(out_img)
     except Exception as exc:
         print("Huffman decode failed:", exc)
